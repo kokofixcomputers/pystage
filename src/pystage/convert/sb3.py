@@ -182,6 +182,12 @@ def unique_global_name(name, ext):
     global_names.add(f"{iname}.{ext}")
     return iname, ext
 
+def get_sb3_data(filename):
+    archive = zipfile.ZipFile(filename, 'r')
+    with archive.open("project.json") as f:
+        data = json.loads(f.read())
+    return data
+
 def get_intermediate(data, name):
     hat_blocks = [
         "event_whenthisspriteclicked",
@@ -290,7 +296,7 @@ def get_intermediate(data, name):
     return project
 
 
-def get_python(project, language="core"):
+def get_python(project, language="core", project_link=None):
     lang_module = importlib.import_module(f"pystage.{language}")
     sprite_class = lang_module.sprite_class.__name__
     stage_class = lang_module.stage_class.__name__
@@ -300,7 +306,12 @@ def get_python(project, language="core"):
     add_variable = get_translated_function("pystage_makevariable", language)
     create_sprite = get_translated_function("pystage_createsprite", language, stage=True)
     play = get_translated_function("pystage_play", language, stage=True)
-    res = textwrap.dedent(f'''\
+    res = ""
+    if project_link:
+        res += textwrap.dedent(f'''\
+        # Online Converter, URL: {project_link}
+        ''')
+    res += textwrap.dedent(f'''\
             # {project['name']} (pyStage, converted from Scratch 3)
 
             from pystage.{language} import {sprite_class}, {stage_class}
@@ -432,9 +443,35 @@ def print_python(project, language="core"):
     print(get_python(project, language))
 
 
+def create_project(file_name, project_name, project, directory, language="core", project_link=None):
+    print(f"Creating project: {project_name}")
+    print(f"Exporting to: {directory}")
+    archive = zipfile.ZipFile(file_name, 'r')
+    dp = Path(directory)
+    if dp.exists():
+        raise("Directory must not exist at this point, but it does: {}".format(directory))
+    os.mkdir(dp)
+    os.mkdir(dp / "images")
+    os.mkdir(dp / "sounds")
+    for key in project["costumes"]:
+        c = project["costumes"][key]
+        with archive.open(f'{key}.{c["extension"]}') as infile:
+            with open(dp / "images" / f'{c["global_name"]}.{c["extension"]}', "wb") as outfile:
+                outfile.write(infile.read())
+    for key in project["sounds"]:
+        s = project["sounds"][key]
+        with archive.open(f'{key}.{s["extension"]}') as infile:
+            with open(dp / "sounds" / f'{s["global_name"]}.{s["extension"]}', "wb") as outfile:
+                outfile.write(infile.read())
+    with open(dp / f'{project_name}.py', "w", encoding="utf-8") as pyfile:
+        pyfile.write(get_python(project, language=language, project_link=project_link))
+
+
+
 ##
 # Main
 #
+
 
 if __name__ == "__main__":
 
@@ -456,47 +493,29 @@ if __name__ == "__main__":
     elif args.verbose:
         logging.basicConfig(level=logging.INFO)
 
-    archive = zipfile.ZipFile(args.file, 'r')
-    with archive.open("project.json") as f:
-        project_name = to_filename(Path(args.file).stem)
-        data = json.loads(f.read())
-        if args.sb3_json:
-            print(json.dumps(data, indent=2))
-            sys.exit(0)
-        project = get_intermediate(data, project_name)
-        if args.intermediate:
-            print(json.dumps(project, indent=2))
+    project_name = to_filename(Path(args.file).stem)
+    data = get_sb3_data(args.file)
+    if args.sb3_json:
+        print(json.dumps(data, indent=2))
+        sys.exit(0)
+    project = get_intermediate(data, project_name)
+    if args.intermediate:
+        print(json.dumps(project, indent=2))
+        sys.exit(1)
+    elif args.python:
+        print_python(project, args.language)
+        sys.exit(1)
+    else:
+        directory = project_name
+        if args.directory:
+            directory = args.directory
+        print(f"Exporting to: {directory}")
+        dp = Path(directory)
+        if dp.exists() and not dp.is_dir:
+            print("Output directory exists, but is not a directory. Use -d to specify another directory.")
             sys.exit(1)
-        elif args.python:
-            print_python(project, args.language)
+        elif dp.exists() and next(dp.iterdir(), False):
+            print("Output directory is not empty. Use -d to specify another one.")
             sys.exit(1)
-        else:
-            print(f"Creating project: {project_name}")
-            directory = project_name
-            if args.directory:
-                directory = args.directory
-            print(f"Exporting to: {directory}")
-            dp = Path(directory)
-            if dp.exists() and not dp.is_dir:
-                print("Output directory exists, but is not a directory. Use -d to specify another directory.")
-                sys.exit(1)
-            elif dp.exists() and next(dp.iterdir(), False):
-                print("Output directory is not empty. Use -d to specify another one.")
-                sys.exit(1)
-            elif not dp.exists():
-                print(f"Creating directory: {dp}")
-                os.mkdir(dp)
-            os.mkdir(dp / "images")
-            os.mkdir(dp / "sounds")
-            for key in project["costumes"]:
-                c = project["costumes"][key]
-                with archive.open(f'{key}.{c["extension"]}') as infile:
-                    with open(dp / "images" / f'{c["global_name"]}.{c["extension"]}', "wb") as outfile:
-                        outfile.write(infile.read())
-            for key in project["sounds"]:
-                s = project["sounds"][key]
-                with archive.open(f'{key}.{s["extension"]}') as infile:
-                    with open(dp / "sounds" / f'{s["global_name"]}.{s["extension"]}', "wb") as outfile:
-                        outfile.write(infile.read())
-            with open(dp / f'{project_name}.py', "w", encoding="utf-8") as pyfile:
-                pyfile.write(get_python(project, language=args.language))
+        elif not dp.exists():
+            create_project(args.file, project_name, project, directory, args.language)
