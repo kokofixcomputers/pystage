@@ -108,7 +108,10 @@ def get_input_value(i, stage):
         if isinstance(value, str) and value.strip() == '':
             value = 0
         else:
-            value = int(value)
+            if value == "random":
+                value = "random"
+            else:
+                value = int(value)
     elif input_type == 9:
         h = value.lstrip("#")
         value = tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
